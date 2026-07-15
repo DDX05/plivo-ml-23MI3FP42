@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Speedrun 120 - Final Submission Summary</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+            background-color: #f8f9fa;
+        }
+        h1, h2, h3 { color: #2c3e50; }
+        h1 { border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { border-bottom: 1px solid #bdc3c7; margin-top: 2rem; }
+        .card {
+            background: #fff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 1.5rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th { background-color: #f1f8ff; color: #0366d6; }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background: #e1f5fe;
+            color: #0277bd;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        .code-inline {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>LLM Speedrun: 2,000 Step Challenge</h1>
+    <p>This document summarizes the architectural choices, hyperparameter configuration, and the human-AI collaborative process used to build the optimized 1.96M parameter model. <em>Note: This HTML summarizes the RUNLOG.md and NOTES.md as requested.</em></p>
+
+    <div class="card">
+        <h2>1. The Architecture</h2>
+        <p>The baseline model was discarded in favor of a modern, "Llama-style" architecture. To fit maximum intelligence into 2,000,000 parameters, we prioritized structural efficiency and modern activation functions.</p>
+        <ul>
+            <li><span class="badge">Weight Tying</span>: The input token embeddings and the final LM head projection share the same weights. This freed up ~196K parameters, which were reallocated to network depth.</li>
+            <li><span class="badge">RoPE</span>: Rotary Positional Embeddings were used instead of learned absolute embeddings. RoPE generalizes sequence positions better and converges significantly faster, which is crucial for a strict 2,000 step budget.</li>
+            <li><span class="badge">SwiGLU & RMSNorm</span>: Standard MLPs and LayerNorms were replaced with SwiGLU (for better gradient flow and density) and RMSNorm (for computational efficiency on the CPU).</li>
+            <li><span class="badge">Custom BPE Tokenizer</span>: Devanagari script expands heavily in raw UTF-8. A custom, pure-Python Byte-Pair Encoding (BPE) tokenizer was built. With 768 merges (Vocab 1024), it compresses Hindi byte-triplets into single tokens, drastically increasing the semantic receptive field per step.</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>2. Hyperparameters & Constraints Check</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Value</th>
+                    <th>Reasoning</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Vocab Size</td>
+                    <td>1024</td>
+                    <td>256 base bytes + 768 merges. Compresses text while keeping embedding parameters low.</td>
+                </tr>
+                <tr>
+                    <td>Hidden Size (d)</td>
+                    <td>192</td>
+                    <td>Calculated explicitly to max out the 2M limit without exceeding it.</td>
+                </tr>
+                <tr>
+                    <td>Layers (L) & Heads</td>
+                    <td>4 Layers / 6 Heads</td>
+                    <td>Provides deep abstraction layers while maintaining 32-dim heads for attention stability.</td>
+                </tr>
+                <tr>
+                    <td>Total Parameters</td>
+                    <td>1,967,808</td>
+                    <td>Comfortably below the 2,000,000 maximum cap.</td>
+                </tr>
+                <tr>
+                    <td>Steps & Batch Size</td>
+                    <td>2000 steps / BS: 64</td>
+                    <td>Max steps strictly enforced. Grad Accumulation (16 * 4) simulates a 64-batch size to stabilize CPU training without memory issues.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>3. Runlog Summary</h2>
+        <p>The training iterations progressed through key bottlenecks in 6 runs:</p>
+        <ol>
+            <li><strong>Data Representation:</strong> The first major leap was abandoning the byte-level tokenizer. By building a fast BPE tokenizer in Python, bits-per-byte dropped immediately as sequence lengths shortened and context density grew.</li>
+            <li><strong>Parameter Economy:</strong> Weight tying was introduced to cheat the parameter limit, dumping the savings directly into an extra Transformer block.</li>
+            <li><strong>Modern Primitives:</strong> Added RoPE and SwiGLU, taking advantage of LLaMA-style scaling laws to force better representation per-parameter.</li>
+            <li><strong>Convergence Speed:</strong> Because 2,000 steps is incredibly short, AdamW with a Cosine Annealing schedule (200 step warmup to 3e-3, decaying to 1e-4) was added. This prevented early divergence and perfectly landed the model in a local minimum at exactly step 1999.</li>
+        </ol>
+    </div>
+
+    <div class="card">
+        <h2>4. Human vs. AI Attribution</h2>
+        <p><strong>Human (Strategic Direction):</strong> The human recognized the constraints of the test environment (CPU-only, Hindi text structure, parameter caps) and supplied the structural mandate: "We must use BPE, we must use Weight Tying, and we must upgrade to RoPE/SwiGLU". The human budgeted the 2M parameters algebraically to ensure the math worked out precisely under the limit.</p>
+        <p><strong>AI (Tactical Execution):</strong> The AI (acting as a coding agent) generated the pure-PyTorch implementations of RoPE, SwiGLU, and RMSNorm without relying on restricted libraries (like FlashAttention or xformers). It authored a fast, chunk-based Python BPE algorithm to work within CPU time constraints, and formulated the precise evaluation logic (<code>loss * tokens / bytes / ln(2)</code>) for accurate BPB tracking.</p>
+    </div>
+
+</body>
+</html>
